@@ -6,7 +6,8 @@ import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 
 @Configuration
-@EnableConfigurationProperties({RateLimitProperties.class, OutboundRateLimitProperties.class})
+@EnableConfigurationProperties({RateLimitProperties.class, OutboundRateLimitProperties.class,
+        TossCircuitBreakerProperties.class})
 public class RateLimitConfig {
 
     @Bean

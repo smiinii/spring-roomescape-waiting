@@ -14,6 +14,9 @@ import roomescape.ratelimit.BackoffSleeper;
 import roomescape.ratelimit.OutboundRateLimitInterceptor;
 import roomescape.ratelimit.OutboundRateLimitProperties;
 import roomescape.ratelimit.RetryAfterInterceptor;
+import roomescape.ratelimit.TossCircuitBreaker;
+import roomescape.ratelimit.TossCircuitBreakerInterceptor;
+import roomescape.ratelimit.TossCircuitBreakerProperties;
 import roomescape.ratelimit.TokenBucket;
 
 @Configuration
@@ -26,6 +29,7 @@ public class TossClientConfig {
             @Value("${toss.connect-timeout}") Duration connectTimeout,
             @Value("${toss.read-timeout}") Duration readTimeout,
             OutboundRateLimitProperties rateLimitProperties,
+            TossCircuitBreakerProperties circuitBreakerProperties,
             LongSupplier nanoTime,
             BackoffSleeper sleeper
     ) {
@@ -33,9 +37,12 @@ public class TossClientConfig {
                 .encodeToString((secretKey + ":").getBytes(StandardCharsets.UTF_8));
         OutboundRateLimitInterceptor outboundRateLimitInterceptor = new OutboundRateLimitInterceptor(rateLimitProperties,
                 new TokenBucket(rateLimitProperties.capacity(), rateLimitProperties.refillPerSecond(), nanoTime));
+        TossCircuitBreakerInterceptor circuitBreakerInterceptor = new TossCircuitBreakerInterceptor(
+                new TossCircuitBreaker(circuitBreakerProperties, nanoTime));
         return RestClient.builder()
                 .baseUrl(baseUrl)
                 .requestFactory(requestFactory(connectTimeout, readTimeout))
+                .requestInterceptor(circuitBreakerInterceptor)
                 .requestInterceptor(outboundRateLimitInterceptor)
                 .requestInterceptor(new RetryAfterInterceptor(rateLimitProperties.maxAttempts(), sleeper,
                         outboundRateLimitInterceptor::consumeToken))

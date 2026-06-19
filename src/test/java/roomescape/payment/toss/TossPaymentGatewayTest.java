@@ -26,6 +26,7 @@ import roomescape.domain.exception.DomainErrorCode;
 import roomescape.domain.exception.RoomEscapeException;
 import roomescape.payment.PaymentConfirmation;
 import roomescape.ratelimit.OutboundRateLimitProperties;
+import roomescape.ratelimit.TossCircuitBreakerProperties;
 
 class TossPaymentGatewayTest {
 
@@ -147,6 +148,56 @@ class TossPaymentGatewayTest {
         assertThat(sleeper.durations()).containsExactly(Duration.ofSeconds(1), Duration.ofSeconds(1));
     }
 
+    @Test
+    void circuitBreakerOpenResponseMapsToRetryableWithoutTossRequestTest() {
+        AtomicLong now = new AtomicLong(0L);
+        OutboundRateLimitProperties outboundProperties = new OutboundRateLimitProperties(true, 3, 0.01D, 3);
+        TossCircuitBreakerProperties circuitBreakerProperties = new TossCircuitBreakerProperties(true, 2, 2, 50D,
+                Duration.ofSeconds(10), 3, 2);
+        tossPaymentGateway = tossPaymentGateway(outboundProperties, circuitBreakerProperties, now);
+        enqueue(500, "{\"code\":\"FAILED_PAYMENT_INTERNAL_SYSTEM_PROCESSING\",\"message\":\"error\"}");
+        enqueue(500, "{\"code\":\"FAILED_PAYMENT_INTERNAL_SYSTEM_PROCESSING\",\"message\":\"error\"}");
+        enqueue(200, "{\"paymentKey\":\"payment_key\",\"orderId\":\"order_test\",\"status\":\"DONE\",\"totalAmount\":50000}");
+
+        assertThatThrownBy(() -> tossPaymentGateway.confirm(
+                new PaymentConfirmation("payment_key", "order_test", "order_test", 50000L)))
+                .isInstanceOf(RoomEscapeException.class)
+                .satisfies(e -> assertThat(((RoomEscapeException) e).code())
+                        .isEqualTo(DomainErrorCode.PAYMENT_RETRYABLE));
+        assertThatThrownBy(() -> tossPaymentGateway.confirm(
+                new PaymentConfirmation("payment_key", "order_test", "order_test", 50000L)))
+                .isInstanceOf(RoomEscapeException.class)
+                .satisfies(e -> assertThat(((RoomEscapeException) e).code())
+                        .isEqualTo(DomainErrorCode.PAYMENT_RETRYABLE));
+        assertThatThrownBy(() -> tossPaymentGateway.confirm(
+                new PaymentConfirmation("payment_key", "order_test", "order_test", 50000L)))
+                .isInstanceOf(RoomEscapeException.class)
+                .satisfies(e -> assertThat(((RoomEscapeException) e).code())
+                        .isEqualTo(DomainErrorCode.PAYMENT_RETRYABLE));
+        now.addAndGet(Duration.ofSeconds(10).toNanos());
+        var result = tossPaymentGateway.confirm(new PaymentConfirmation("payment_key", "order_test", "order_test", 50000L));
+
+        assertThat(result.status()).isEqualTo("DONE");
+        assertThat(mockWebServer.getRequestCount()).isEqualTo(3);
+    }
+
+    @Test
+    void retryAfter429DoesNotOpenCircuitBreakerTest() {
+        TossCircuitBreakerProperties circuitBreakerProperties = new TossCircuitBreakerProperties(true, 1, 1, 1D,
+                Duration.ofSeconds(10), 3, 2);
+        tossPaymentGateway = tossPaymentGateway(rateLimitProperties(), circuitBreakerProperties, new AtomicLong(0L));
+        enqueue(429, "{}");
+        enqueue(200, "{\"paymentKey\":\"payment_key\",\"orderId\":\"order_test\",\"status\":\"DONE\",\"totalAmount\":50000}");
+        enqueue(200, "{\"paymentKey\":\"payment_key\",\"orderId\":\"order_test\",\"status\":\"DONE\",\"totalAmount\":50000}");
+
+        var result = tossPaymentGateway.confirm(new PaymentConfirmation("payment_key", "order_test", "order_test", 50000L));
+        var nextResult = tossPaymentGateway.confirm(new PaymentConfirmation("payment_key", "order_test", "order_test", 50000L));
+
+        assertThat(result.status()).isEqualTo("DONE");
+        assertThat(nextResult.status()).isEqualTo("DONE");
+        assertThat(mockWebServer.getRequestCount()).isEqualTo(3);
+    }
+
     static Stream<Arguments> errorCases() {
         return Stream.of(
                 arguments(400, "ALREADY_PROCESSED_PAYMENT", DomainErrorCode.PAYMENT_ALREADY_PROCESSED),
@@ -170,9 +221,19 @@ class TossPaymentGatewayTest {
     }
 
     private TossPaymentGateway tossPaymentGateway(OutboundRateLimitProperties properties, AtomicLong now) {
+        return tossPaymentGateway(properties, circuitBreakerProperties(), now);
+    }
+
+    private TossPaymentGateway tossPaymentGateway(OutboundRateLimitProperties properties,
+                                                  TossCircuitBreakerProperties circuitBreakerProperties,
+                                                  AtomicLong now) {
         var restClient = new TossClientConfig().tossRestClient(mockWebServer.url("/").toString(), "test_gsk_dummy",
-                Duration.ofSeconds(1), Duration.ofSeconds(1), properties, now::get, sleeper);
+                Duration.ofSeconds(1), Duration.ofSeconds(1), properties, circuitBreakerProperties, now::get, sleeper);
         return new TossPaymentGateway(restClient, new ObjectMapper(), new TossPaymentErrorMapper());
+    }
+
+    private TossCircuitBreakerProperties circuitBreakerProperties() {
+        return new TossCircuitBreakerProperties(true, 20, 10, 50D, Duration.ofSeconds(10), 3, 2);
     }
 
     private static class RecordingSleeper implements roomescape.ratelimit.BackoffSleeper {

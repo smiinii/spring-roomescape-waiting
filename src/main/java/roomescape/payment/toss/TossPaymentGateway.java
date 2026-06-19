@@ -20,6 +20,7 @@ import roomescape.payment.toss.dto.TossErrorResponse;
 import roomescape.payment.toss.dto.TossPaymentConfirmRequest;
 import roomescape.payment.toss.dto.TossPaymentResponse;
 import roomescape.ratelimit.OutboundRateLimitException;
+import roomescape.ratelimit.TossCircuitBreakerOpenException;
 
 @Component
 public class TossPaymentGateway implements PaymentGateway {
@@ -67,7 +68,12 @@ public class TossPaymentGateway implements PaymentGateway {
             throw mapAccessException(e);
         } catch (OutboundRateLimitException e) {
             throw new RoomEscapeException(DomainErrorCode.PAYMENT_RETRYABLE);
+        } catch (TossCircuitBreakerOpenException e) {
+            throw new RoomEscapeException(DomainErrorCode.PAYMENT_RETRYABLE);
         } catch (RestClientException e) {
+            if (hasCause(e, TossCircuitBreakerOpenException.class)) {
+                throw new RoomEscapeException(DomainErrorCode.PAYMENT_RETRYABLE);
+            }
             if (hasCause(e, SocketTimeoutException.class)) {
                 throw new RoomEscapeException(DomainErrorCode.PAYMENT_UNKNOWN);
             }
