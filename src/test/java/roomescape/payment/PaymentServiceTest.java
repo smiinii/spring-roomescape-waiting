@@ -5,6 +5,8 @@ import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
+import java.time.Duration;
+import java.util.ArrayList;
 import java.util.List;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -17,11 +19,13 @@ class PaymentServiceTest {
 
     private PaymentGateway paymentGateway;
     private PaymentService paymentService;
+    private RecordingSleeper sleeper;
 
     @BeforeEach
     void beforeEach() {
         paymentGateway = Mockito.mock(PaymentGateway.class);
-        paymentService = new PaymentService(paymentGateway);
+        sleeper = new RecordingSleeper();
+        paymentService = new PaymentService(paymentGateway, sleeper);
     }
 
     @Test
@@ -37,6 +41,7 @@ class PaymentServiceTest {
         assertThat(result.unknown()).isFalse();
         assertThat(result.failed()).isFalse();
         verify(paymentGateway, times(1)).confirm(new PaymentConfirmation("payment_key", "order_test", "order_test", 50000L));
+        assertThat(sleeper.durations()).isEmpty();
     }
 
     @Test
@@ -54,6 +59,7 @@ class PaymentServiceTest {
         assertThat(result.unknown()).isFalse();
         assertThat(result.failed()).isFalse();
         assertConfirmAttemptsUseSameIdempotencyKey("stored_key", 3);
+        assertThat(sleeper.durations()).containsExactly(Duration.ofMillis(200), Duration.ofMillis(400));
     }
 
     @Test
@@ -68,6 +74,7 @@ class PaymentServiceTest {
         assertThat(result.paymentResult()).isNull();
         assertThat(result.failed()).isFalse();
         assertConfirmAttemptsUseSameIdempotencyKey("stored_key", 3);
+        assertThat(sleeper.durations()).containsExactly(Duration.ofMillis(200), Duration.ofMillis(400));
     }
 
     @Test
@@ -81,6 +88,7 @@ class PaymentServiceTest {
         assertThat(result.failed()).isTrue();
         assertThat(result.failureCode()).isEqualTo(DomainErrorCode.PAYMENT_RETRYABLE);
         assertConfirmAttemptsUseSameIdempotencyKey("stored_key", 3);
+        assertThat(sleeper.durations()).containsExactly(Duration.ofMillis(200), Duration.ofMillis(400));
     }
 
     @Test
@@ -94,6 +102,7 @@ class PaymentServiceTest {
         assertThat(result.failed()).isTrue();
         assertThat(result.failureCode()).isEqualTo(DomainErrorCode.PAYMENT_REJECTED);
         verify(paymentGateway, times(1)).confirm(confirmation);
+        assertThat(sleeper.durations()).isEmpty();
     }
 
     @Test
@@ -117,5 +126,19 @@ class PaymentServiceTest {
                 .toList();
 
         assertThat(idempotencyKeys).containsOnly(idempotencyKey);
+    }
+
+    private static class RecordingSleeper implements roomescape.ratelimit.BackoffSleeper {
+
+        private final List<Duration> durations = new ArrayList<>();
+
+        @Override
+        public void sleep(Duration duration) {
+            durations.add(duration);
+        }
+
+        private List<Duration> durations() {
+            return durations;
+        }
     }
 }

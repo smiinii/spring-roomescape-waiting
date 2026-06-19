@@ -6,6 +6,8 @@ import static org.junit.jupiter.params.provider.Arguments.arguments;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import java.io.IOException;
+import java.net.ConnectException;
+import java.net.SocketTimeoutException;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.util.Base64;
@@ -21,6 +23,8 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.Arguments;
 import org.junit.jupiter.params.provider.MethodSource;
+import org.springframework.web.client.ResourceAccessException;
+import org.springframework.web.client.RestClient;
 import roomescape.config.TossClientConfig;
 import roomescape.domain.exception.DomainErrorCode;
 import roomescape.domain.exception.RoomEscapeException;
@@ -93,6 +97,30 @@ class TossPaymentGatewayTest {
                 .setHeader("Content-Type", "application/json")
                 .setBody("{\"paymentKey\":\"payment_key\",\"orderId\":\"order_test\",\"status\":\"DONE\",\"totalAmount\":50000}")
                 .setBodyDelay(2, TimeUnit.SECONDS));
+
+        assertThatThrownBy(() -> tossPaymentGateway.confirm(
+                new PaymentConfirmation("payment_key", "order_test", "order_test", 50000L)))
+                .isInstanceOf(RoomEscapeException.class)
+                .satisfies(e -> assertThat(((RoomEscapeException) e).code())
+                        .isEqualTo(DomainErrorCode.PAYMENT_UNKNOWN));
+    }
+
+    @Test
+    void connectExceptionMapsToRetryablePaymentErrorTest() {
+        tossPaymentGateway = tossPaymentGateway(new ResourceAccessException("connect failed",
+                new ConnectException("connection refused")));
+
+        assertThatThrownBy(() -> tossPaymentGateway.confirm(
+                new PaymentConfirmation("payment_key", "order_test", "order_test", 50000L)))
+                .isInstanceOf(RoomEscapeException.class)
+                .satisfies(e -> assertThat(((RoomEscapeException) e).code())
+                        .isEqualTo(DomainErrorCode.PAYMENT_RETRYABLE));
+    }
+
+    @Test
+    void socketTimeoutExceptionMapsToUnknownWithoutMessageParsingTest() {
+        tossPaymentGateway = tossPaymentGateway(new ResourceAccessException("request failed",
+                new SocketTimeoutException("connect timed out")));
 
         assertThatThrownBy(() -> tossPaymentGateway.confirm(
                 new PaymentConfirmation("payment_key", "order_test", "order_test", 50000L)))
@@ -229,6 +257,16 @@ class TossPaymentGatewayTest {
                                                   AtomicLong now) {
         var restClient = new TossClientConfig().tossRestClient(mockWebServer.url("/").toString(), "test_gsk_dummy",
                 Duration.ofSeconds(1), Duration.ofSeconds(1), properties, circuitBreakerProperties, now::get, sleeper);
+        return new TossPaymentGateway(restClient, new ObjectMapper(), new TossPaymentErrorMapper());
+    }
+
+    private TossPaymentGateway tossPaymentGateway(RuntimeException exception) {
+        RestClient restClient = RestClient.builder()
+                .baseUrl(mockWebServer.url("/").toString())
+                .requestInterceptor((request, body, execution) -> {
+                    throw exception;
+                })
+                .build();
         return new TossPaymentGateway(restClient, new ObjectMapper(), new TossPaymentErrorMapper());
     }
 

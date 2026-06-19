@@ -86,24 +86,9 @@ public class TossPaymentGateway implements PaymentGateway {
             return new RoomEscapeException(DomainErrorCode.PAYMENT_RETRYABLE);
         }
         if (hasCause(exception, SocketTimeoutException.class)) {
-            if (containsMessage(exception, "connect timed out")) {
-                return new RoomEscapeException(DomainErrorCode.PAYMENT_RETRYABLE);
-            }
             return new RoomEscapeException(DomainErrorCode.PAYMENT_UNKNOWN);
         }
         return new RoomEscapeException(DomainErrorCode.PAYMENT_RETRYABLE);
-    }
-
-    private boolean containsMessage(Throwable throwable, String message) {
-        Throwable current = throwable;
-        while (current != null) {
-            String currentMessage = current.getMessage();
-            if (currentMessage != null && currentMessage.toLowerCase().contains(message)) {
-                return true;
-            }
-            current = current.getCause();
-        }
-        return false;
     }
 
     private boolean hasCause(Throwable throwable, Class<? extends Throwable> causeType) {
