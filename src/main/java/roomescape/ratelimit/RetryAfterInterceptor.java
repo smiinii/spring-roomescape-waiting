@@ -16,15 +16,24 @@ public class RetryAfterInterceptor implements ClientHttpRequestInterceptor {
     private final int maxAttempts;
     private final BackoffSleeper sleeper;
     private final Runnable beforeRetry;
+    private final RetryDeadline retryDeadline;
+    private final Duration attemptTimeout;
 
     public RetryAfterInterceptor(int maxAttempts, BackoffSleeper sleeper) {
         this(maxAttempts, sleeper, () -> { });
     }
 
     public RetryAfterInterceptor(int maxAttempts, BackoffSleeper sleeper, Runnable beforeRetry) {
+        this(maxAttempts, sleeper, beforeRetry, new RetryDeadline(System::nanoTime), Duration.ZERO);
+    }
+
+    public RetryAfterInterceptor(int maxAttempts, BackoffSleeper sleeper, Runnable beforeRetry,
+                                 RetryDeadline retryDeadline, Duration attemptTimeout) {
         this.maxAttempts = maxAttempts;
         this.sleeper = sleeper;
         this.beforeRetry = beforeRetry;
+        this.retryDeadline = retryDeadline;
+        this.attemptTimeout = attemptTimeout;
     }
 
     @Override
@@ -34,6 +43,9 @@ public class RetryAfterInterceptor implements ClientHttpRequestInterceptor {
         int attempt = 1;
         while (isTooManyRequests(response) && attempt < maxAttempts) {
             Duration retryAfter = retryAfter(response);
+            if (!canRetry(retryAfter)) {
+                return response;
+            }
             response.close();
             sleeper.sleep(retryAfter);
             beforeRetry.run();
@@ -57,5 +69,9 @@ public class RetryAfterInterceptor implements ClientHttpRequestInterceptor {
         } catch (NumberFormatException e) {
             return DEFAULT_RETRY_AFTER;
         }
+    }
+
+    private boolean canRetry(Duration retryAfter) {
+        return retryDeadline.canFit(retryAfter.plus(attemptTimeout));
     }
 }

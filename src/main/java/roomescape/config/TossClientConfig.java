@@ -13,6 +13,7 @@ import org.springframework.web.client.RestClient;
 import roomescape.ratelimit.BackoffSleeper;
 import roomescape.ratelimit.OutboundRateLimitInterceptor;
 import roomescape.ratelimit.OutboundRateLimitProperties;
+import roomescape.ratelimit.RetryDeadline;
 import roomescape.ratelimit.RetryAfterInterceptor;
 import roomescape.ratelimit.TossCircuitBreaker;
 import roomescape.ratelimit.TossCircuitBreakerInterceptor;
@@ -31,6 +32,7 @@ public class TossClientConfig {
             OutboundRateLimitProperties rateLimitProperties,
             TossCircuitBreakerProperties circuitBreakerProperties,
             LongSupplier nanoTime,
+            RetryDeadline retryDeadline,
             BackoffSleeper sleeper
     ) {
         String basic = Base64.getEncoder()
@@ -45,7 +47,7 @@ public class TossClientConfig {
                 .requestInterceptor(circuitBreakerInterceptor)
                 .requestInterceptor(outboundRateLimitInterceptor)
                 .requestInterceptor(new RetryAfterInterceptor(rateLimitProperties.maxAttempts(), sleeper,
-                        outboundRateLimitInterceptor::consumeToken))
+                        outboundRateLimitInterceptor::consumeToken, retryDeadline, readTimeout))
                 .defaultHeader(HttpHeaders.AUTHORIZATION, "Basic " + basic)
                 .build();
     }

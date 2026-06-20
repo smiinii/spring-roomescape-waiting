@@ -30,6 +30,7 @@ import roomescape.domain.exception.DomainErrorCode;
 import roomescape.domain.exception.RoomEscapeException;
 import roomescape.payment.PaymentConfirmation;
 import roomescape.ratelimit.OutboundRateLimitProperties;
+import roomescape.ratelimit.RetryDeadline;
 import roomescape.ratelimit.TossCircuitBreakerProperties;
 
 class TossPaymentGatewayTest {
@@ -256,7 +257,8 @@ class TossPaymentGatewayTest {
                                                   TossCircuitBreakerProperties circuitBreakerProperties,
                                                   AtomicLong now) {
         var restClient = new TossClientConfig().tossRestClient(mockWebServer.url("/").toString(), "test_gsk_dummy",
-                Duration.ofSeconds(1), Duration.ofSeconds(1), properties, circuitBreakerProperties, now::get, sleeper);
+                Duration.ofSeconds(1), Duration.ofSeconds(1), properties, circuitBreakerProperties, now::get,
+                new RetryDeadline(now::get), sleeper);
         return new TossPaymentGateway(restClient, new ObjectMapper(), new TossPaymentErrorMapper());
     }
 

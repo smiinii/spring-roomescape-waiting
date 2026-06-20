@@ -14,4 +14,9 @@ public class RateLimitConfig {
     public LongSupplier nanoTimeSupplier() {
         return System::nanoTime;
     }
+
+    @Bean
+    public RetryDeadline retryDeadline(LongSupplier nanoTime) {
+        return new RetryDeadline(nanoTime);
+    }
 }

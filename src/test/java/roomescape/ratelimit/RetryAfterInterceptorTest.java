@@ -78,6 +78,43 @@ class RetryAfterInterceptorTest {
         assertThat(sleeper.durations()).containsExactly(Duration.ofSeconds(3));
     }
 
+    @Test
+    void returns429WithoutRetryWhenRetryAfterWouldExceedDeadlineTest() {
+        FakeNanoTime nanoTime = new FakeNanoTime();
+        RetryDeadline retryDeadline = new RetryDeadline(nanoTime);
+        RecordingSleeper sleeper = new RecordingSleeper();
+        RetryAfterInterceptor interceptor = new RetryAfterInterceptor(3, sleeper, () -> { }, retryDeadline,
+                Duration.ofSeconds(10));
+        MockClientHttpRequest request = new MockClientHttpRequest(HttpMethod.POST, URI.create("https://example.com"));
+        SequenceExecution execution = new SequenceExecution(
+                response(HttpStatus.TOO_MANY_REQUESTS, "6"),
+                response(HttpStatus.OK, null));
+
+        ClientHttpResponse response = retryDeadline.callWithin(Duration.ofSeconds(15), () -> intercept(interceptor,
+                request, execution));
+
+        assertThat(statusCode(response)).isEqualTo(HttpStatus.TOO_MANY_REQUESTS);
+        assertThat(execution.count()).isEqualTo(1);
+        assertThat(sleeper.durations()).isEmpty();
+    }
+
+    private ClientHttpResponse intercept(RetryAfterInterceptor interceptor, MockClientHttpRequest request,
+                                         SequenceExecution execution) {
+        try {
+            return interceptor.intercept(request, new byte[0], execution);
+        } catch (IOException e) {
+            throw new IllegalStateException(e);
+        }
+    }
+
+    private HttpStatus statusCode(ClientHttpResponse response) {
+        try {
+            return HttpStatus.valueOf(response.getStatusCode().value());
+        } catch (IOException e) {
+            throw new IllegalStateException(e);
+        }
+    }
+
     private static class SequenceExecution implements ClientHttpRequestExecution {
 
         private final ClientHttpResponse[] responses;
@@ -94,6 +131,14 @@ class RetryAfterInterceptorTest {
 
         private int count() {
             return count;
+        }
+    }
+
+    private static class FakeNanoTime implements java.util.function.LongSupplier {
+
+        @Override
+        public long getAsLong() {
+            return 0;
         }
     }
 
